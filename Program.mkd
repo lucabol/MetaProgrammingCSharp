@@ -1,4 +1,3 @@
-﻿/**
 Meta-programming and policy-based design in C# using JIT dead code removal and inlining
 =======================================================================================
 Abstract
@@ -16,7 +15,8 @@ BTW2: it is also related to the uber cool [Shape proposal for C#](https://github
 Implementation
 --------------
 First, the usual plethora of namespaces ... BenchmarkDotNet is really heavy into separating abstractions in different namespaces ...
-**/
+
+~~~csharp
 using System.Runtime.CompilerServices;
 using System.Threading;
 
@@ -26,12 +26,12 @@ using BenchmarkDotNet.Diagnostics.Windows.Configs;
 using BenchmarkDotNet.Mathematics;
 using BenchmarkDotNet.Order;
 using BenchmarkDotNet.Running;
+~~~
 
-/**
 Let's take a look at the strategy pattern, as more traditionally implemented. You got an interface `IIncrementer` and two implementations, either thread safe or not.
 Let's also add a couple of struct implementations so that we can measure the performance difference of implementation by classes and by structs.
-**/
 
+~~~csharp
 public interface IIncrementer { void Increment(ref int location); }
 
 public sealed class CStandardIncrementer        : IIncrementer {[MethodImpl(MethodImplOptions.AggressiveInlining)] public void Increment(ref int location) => location += 1; }
@@ -39,13 +39,14 @@ public sealed class CInterlockedIncrementer     : IIncrementer {[MethodImpl(Meth
 
 public readonly struct SStandardIncrementer     : IIncrementer {[MethodImpl(MethodImplOptions.AggressiveInlining)] public void Increment(ref int location) => location += 1; }
 public readonly struct SInterlockedIncrementer  : IIncrementer {[MethodImpl(MethodImplOptions.AggressiveInlining)] public void Increment(ref int location) => Interlocked.Increment(ref location); }
+~~~
 
-/**
 We then need a class that can be customized by an Incrementer. Think of it as: the policy of incrementing something is independent from the class in question.
 
 Let's take a Counter and call it Dynamic as we want to be able to customize it at runtime. We need to keep things simple so that looking at ASM is doable.
 Also we inline everything to try to squeeze the most performance out of our program.
-**/
+
+~~~csharp
 public class DynamicCounter<T> where T: IIncrementer
 {
     int _count;
@@ -56,8 +57,8 @@ public class DynamicCounter<T> where T: IIncrementer
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Increment() => _incrementer.Increment(ref _count);
 }
+~~~
 
-/**
 Then we look at how to implement the strategy pattern at compile time (transforming it magically into the policy pattern).
 
 (no-one every talks about the negative aspects of giving names to things, one of these days I'll blog about it ...)
@@ -67,7 +68,8 @@ There are many ways to go about it. They all rely on the fact that the JIT Compi
 For each one of these types, the JIT knows at compile type what `T` is, which brings about certain optimizations.
 
 The optimization exploited by `StaticCounterInterface` is that the call to `Increment` becomes a non-virtual call that can be inlined.
-**/
+
+~~~csharp
 public class StaticCounterInterface<T> where T : struct, IIncrementer
 {
     int _count;
@@ -76,14 +78,15 @@ public class StaticCounterInterface<T> where T : struct, IIncrementer
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Increment() => _incrementer.Increment(ref _count);
 }
+~~~
 
-/**
 For `StaticCounterMatch` the situation is even more obvious.
 
 The Jitter doesn't generate code for any of the `if` statements. It just puts the right code for the type `T` directly in the body of the `Increment` method.
 
 It is as if the `if` statement were executed at compile time, as with `C++` templates. Also notice the `IncrementRaw` method used for perf comparison.
-**/
+
+~~~csharp
 public class StaticCounterMatch<T>
 {
     int _count;
@@ -97,8 +100,8 @@ public class StaticCounterMatch<T>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void IncrementRaw() => _count += 1;
 }
+~~~
 
-/**
 We are now ready for the performance testing. We create one class for each combination and benchmark their Increment method.
 
 A few comments on the attributes:
@@ -106,7 +109,8 @@ A few comments on the attributes:
 2. `InProcessAttribute` makes everything go faster, but cannot be used to generate assembly.
 3. `DisassemblyDiagnoser` creates files with the assembly code.
 4. `RankColumn` generates a nicer table.
-**/
+
+~~~csharp
 //[DryCoreJob]
 //[InProcessAttribute]
 [DisassemblyDiagnoser(printAsm: true, printPrologAndEpilog: true, printIL: true, printSource: false, recursiveDepth: 5)]
@@ -129,7 +133,8 @@ public  class MainClass
 
     public static void Main() => BenchmarkRunner.Run<MainClass>();
 }
-/**
+~~~
+
 Results
 -------
 Please note that the results are valid just for the tested configuration.
@@ -259,4 +264,3 @@ Summary
 If you can afford to use the policy pattern instead of the more generic strategy pattern (i.e. compile time vs run time dispatch) and/or you need bare to the metal performance, consider the code above.
     
 As for me, I plan to use it in the near future for a few low level abstractions (i.e. memory allocators).
-**/
