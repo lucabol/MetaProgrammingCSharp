@@ -49,7 +49,7 @@ Also we inline everything to try to squeeze the most performance out of our prog
 public class DynamicCounter<T> where T: IIncrementer
 {
     int _count;
-    IIncrementer _incrementer;
+    T _incrementer;
 
     public DynamicCounter(T incrementer) => _incrementer = incrementer;
 
@@ -109,7 +109,7 @@ A few comments on the attributes:
 **/
 //[DryCoreJob]
 //[InProcessAttribute]
-[DisassemblyDiagnoser(printAsm: true, printPrologAndEpilog: true, printIL: true, printSource: false, recursiveDepth: 5)]
+[DisassemblyDiagnoser(printAsm: true, printPrologAndEpilog: true, printIL: false, printSource: false, recursiveDepth: 3)]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [RankColumn(NumeralSystem.Stars)]
 public  class MainClass
@@ -136,24 +136,28 @@ Please note that the results are valid just for the tested configuration.
 
 I have no reason to think that they would be different on other modern runtimes/OSs as the optimizations are quite well known.
 
+``` ini
+
 BenchmarkDotNet=v0.11.3, OS=Windows 10.0.17763.253 (1809/October2018Update/Redstone5)
 Intel Core i7-6600U CPU 2.60GHz (Skylake), 1 CPU, 4 logical and 2 physical cores
 .NET Core SDK=3.0.100-preview-009812
-  [Host]     : .NET Core 2.0.9 (CoreCLR 4.6.26614.01, CoreFX 4.6.26614.01), 64bit RyuJIT
-  DefaultJob : .NET Core 2.0.9 (CoreCLR 4.6.26614.01, CoreFX 4.6.26614.01), 64bit RyuJIT
+  [Host]     : .NET Core 3.0.0-preview-27122-01 (CoreCLR 4.6.27121.03, CoreFX 4.7.18.57103), 64bit RyuJIT
+  DefaultJob : .NET Core 3.0.0-preview-27122-01 (CoreCLR 4.6.27121.03, CoreFX 4.7.18.57103), 64bit RyuJIT
 
-|                 Method |      Mean |     Error |    StdDev |  Ratio | RatioSD |  Rank |
-|----------------------- |----------:|----------:|----------:|-------:|--------:|------:|
-|           IncrementRaw | 0.0510 ns | 0.0248 ns | 0.0207 ns |   1.00 |    0.00 |     * |
-| StaticCounterInterface | 0.1000 ns | 0.0414 ns | 0.0881 ns |   8.35 |   23.19 |    ** |
-|     StaticCounterMatch | 0.1510 ns | 0.0390 ns | 0.0383 ns |  16.25 |   48.69 |   *** |
-|        DynamicConcrete | 1.4687 ns | 0.0660 ns | 0.0786 ns | 172.74 |  522.93 |  **** |
-|       DynamicInterface | 1.4819 ns | 0.0655 ns | 0.0851 ns | 164.50 |  490.50 |  **** |
-|          DynamicStruct | 2.4440 ns | 0.0829 ns | 0.0735 ns | 282.47 |  850.85 | ***** |
 
-As expected, you gain an order of magnitude in performance by foregoing run time customization. Again you loose some when using structs in the strategy pattern.
+```
+|                 Method |      Mean |     Error |    StdDev |    Median |       P95 | Ratio | RatioSD | Rank |
+|----------------------- |----------:|----------:|----------:|----------:|----------:|------:|--------:|-----:|
+| StaticCounterInterface | 0.0266 ns | 0.0308 ns | 0.0649 ns | 0.0000 ns | 0.1710 ns |  0.02 |    0.04 |    * |
+|     StaticCounterMatch | 0.0345 ns | 0.0473 ns | 0.1115 ns | 0.0000 ns | 0.3633 ns |  0.62 |    0.92 |    * |
+|          DynamicStruct | 0.0466 ns | 0.0598 ns | 0.1433 ns | 0.0000 ns | 0.4790 ns |  1.02 |    1.07 |    * |
+|           IncrementRaw | 0.2457 ns | 0.0160 ns | 0.0125 ns | 0.2404 ns | 0.2691 ns |  1.00 |    0.00 |   ** |
+|       DynamicInterface | 1.6319 ns | 0.0741 ns | 0.1410 ns | 1.6309 ns | 1.8217 ns |  7.19 |    0.62 |  *** |
+|        DynamicConcrete | 1.7630 ns | 0.0740 ns | 0.0656 ns | 1.7481 ns | 1.8628 ns |  7.20 |    0.49 | **** |
 
-Notice that these numbers are really low. In fact the order of the first 3 lines might change when you run it. But they are always much faster than the rest.
+As expected, you gain an order of magnitude in performance by foregoing run time customization, except when using a `struct` as the optimizer manages to inline that one.
+
+Notice that these numbers are really low. In fact the order of the first 4 lines might change when you run it. But they are always much faster than the rest.
 
 But why? Let's look at the generated code.
 
@@ -236,19 +240,9 @@ For the sake of completeness, let's look at the assembly code for the dynamic di
        cmp     dword ptr [rcx],ecx
        jmp     rax
 
-; MainClass.DynamicStruct()
-       mov     rcx,qword ptr [rcx+18h]
-       cmp     dword ptr [rcx],ecx
-       lea     rdx,[rcx+10h]
-       mov     rcx,qword ptr [rcx+8]
-       mov     r11,7FF8C2B10470h
-       mov     rax,qword ptr [r11]
-       cmp     dword ptr [rcx],ecx
-       jmp     rax
-
 ~~~
 
-The first thing to notice is that the code is identical for all 3 functions, despite their seemingly different declarations. The Jitter doesn't care.
+The first thing to notice is that the code is identical, despite their seemingly different declarations. The Jitter doesn't care.
 
 Notice the machinations the Jitter performs, very likely related to dynamic dispatching, to calculate the address to finally jump to. That's where our Increment method is located.
 
